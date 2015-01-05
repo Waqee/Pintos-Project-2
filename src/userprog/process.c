@@ -21,7 +21,6 @@
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 
-
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
@@ -92,9 +91,9 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid UNUSED) 
 {
-  while(1)
+  while(!thread_current()->ex)
     ;
-return -1;
+  return -1;
 }
 
 /* Free the current process's resources. */
@@ -233,7 +232,7 @@ load (const char *file_name, void (**eip) (void), void **esp)
   
   /* Open executable file. */
   char * fn_cp = malloc (strlen(file_name)+1);
-  strlcpy(fn_cp, file_name, strlen(file_name));
+  strlcpy(fn_cp, file_name, strlen(file_name)+1);
   
   char * save_ptr;
   fn_cp = strtok_r(fn_cp," ",&save_ptr);
@@ -463,7 +462,7 @@ setup_stack (void **esp, char * file_name)
   int argc = 0,i;
 
   char * copy = malloc(strlen(file_name)+1);
-  strlcpy (copy, file_name, strlen(file_name));
+  strlcpy (copy, file_name, strlen(file_name)+1);
 
 
   for (token = strtok_r (copy, " ", &save_ptr); token != NULL;
@@ -478,7 +477,6 @@ setup_stack (void **esp, char * file_name)
     {
       *esp -= strlen(token) + 1;
       memcpy(*esp,token,strlen(token) + 1);
-      hex_dump(*esp,*esp,PHYS_BASE-(*esp),true);
 
       argv[i]=*esp;
     }
@@ -510,9 +508,6 @@ setup_stack (void **esp, char * file_name)
 
   *esp-=sizeof(int);
   memcpy(*esp,&zero,sizeof(int));
-
-  hex_dump(*esp,*esp,PHYS_BASE-(*esp),true);
-
 
   return success;
 }
