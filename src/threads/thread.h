@@ -98,7 +98,12 @@ struct thread
 
     bool ex;
 
+    int exit_error;
+
     struct thread* parent;
+
+    struct list files;
+    int fd_count;
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
