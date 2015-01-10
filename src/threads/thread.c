@@ -307,6 +307,12 @@ thread_exit (void)
   /* Remove thread from all threads list, set our status to dying,
      and schedule another process.  That process will destroy us
      when it calls thread_schedule_tail(). */
+
+    while(!list_empty(&thread_current()->child_proc)){
+      struct proc_file *f = list_entry (list_pop_front(&thread_current()->child_proc), struct child, elem);
+      free(f);
+    }
+
   intr_disable ();
   list_remove (&thread_current()->allelem);
   thread_current ()->status = THREAD_DYING;
@@ -483,8 +489,8 @@ init_thread (struct thread *t, const char *name, int priority)
   t->parent = running_thread();
   list_init (&t->files);
   t->fd_count=2;
-  lock_init(&t->child_lock);
-  cond_init(&t->child_cond);
+  t->exit_error = -100;
+  sema_init(&t->child_lock,0);
   t->waitingon=0;
   t->self=NULL;
   list_push_back (&all_list, &t->allelem);

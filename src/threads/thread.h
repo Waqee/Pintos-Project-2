@@ -97,8 +97,8 @@ struct thread
 
     int64_t waketick;
 
-    bool ex;
-
+    bool success;
+    
     int exit_error;
 
     struct list child_proc;
@@ -109,8 +109,7 @@ struct thread
     struct list files;
     int fd_count;
 
-    struct lock child_lock;
-    struct condition child_cond;
+    struct semaphore child_lock;
     int waitingon;
 
 #ifdef USERPROG

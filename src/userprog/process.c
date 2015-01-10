@@ -45,9 +45,16 @@ process_execute (const char *file_name)
   strlcpy (f_name, file_name, strlen(file_name)+1);
   f_name = strtok_r (f_name," ",&save_ptr);
   /* Create a new thread to execute FILE_NAME. */
+  //printf("%d\n", thread_current()->tid);
   tid = thread_create (f_name, PRI_DEFAULT, start_process, fn_copy);
+  free(f_name);
   if (tid == TID_ERROR)
-    palloc_free_page (fn_copy); 
+    palloc_free_page (fn_copy);
+
+  sema_down(&thread_current()->child_lock);
+
+  if(!thread_current()->success)
+    return -1;
 
   return tid;
 }
@@ -71,8 +78,17 @@ start_process (void *file_name_)
 
   /* If load failed, quit. */
   palloc_free_page (file_name);
-  if (!success) 
-    thread_exit ();
+  if (!success) {
+    //printf("%d %d\n",thread_current()->tid, thread_current()->parent->tid);
+    thread_current()->parent->success=false;
+    sema_up(&thread_current()->parent->child_lock);
+    thread_exit();
+  }
+  else
+  {
+    thread_current()->parent->success=true;
+    sema_up(&thread_current()->parent->child_lock);
+  }
 
   /* Start the user process by simulating a return from an
      interrupt, implemented by intr_exit (in
@@ -96,6 +112,7 @@ start_process (void *file_name_)
 int
 process_wait (tid_t child_tid) 
 {
+  //printf("Wait : %s %d\n",thread_current()->name, child_tid);
   struct list_elem *e;
 
   struct child *ch=NULL;
@@ -118,11 +135,8 @@ process_wait (tid_t child_tid)
 
   thread_current()->waitingon = ch->tid;
     
-  lock_acquire(&thread_current()->child_lock);
   if(!ch->used)
-    cond_wait(&thread_current()->child_cond,&thread_current()->child_lock);
-
-  lock_release(&thread_current()->child_lock);
+    sema_down(&thread_current()->child_lock);
 
   int temp = ch->exit_error;
   list_remove(e1);
@@ -137,13 +151,18 @@ process_exit (void)
   struct thread *cur = thread_current ();
   uint32_t *pd;
 
-  int exit_code = cur->exit_error;
-  printf("%s: exit(%d)\n",cur->name,exit_code);
 
-  acquire_filesys_lock();
-  file_close(thread_current()->self);
-  close_all_files(&thread_current()->files);
-  release_filesys_lock();
+    if(cur->exit_error==-100)
+      exit_proc(-1);
+
+    int exit_code = cur->exit_error;
+    printf("%s: exit(%d)\n",cur->name,exit_code);
+
+    acquire_filesys_lock();
+    file_close(thread_current()->self);
+    close_all_files(&thread_current()->files);
+    release_filesys_lock();
+
   
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -263,21 +282,24 @@ load (const char *file_name, void (**eip) (void), void **esp)
   bool success = false;
   int i;
 
+  acquire_filesys_lock();
   /* Allocate and activate page directory. */
   t->pagedir = pagedir_create ();
-  if (t->pagedir == NULL) 
+  if (t->pagedir == NULL)
     goto done;
   process_activate ();
   
   /* Open executable file. */
+
   char * fn_cp = malloc (strlen(file_name)+1);
   strlcpy(fn_cp, file_name, strlen(file_name)+1);
   
   char * save_ptr;
   fn_cp = strtok_r(fn_cp," ",&save_ptr);
 
-  acquire_filesys_lock();
   file = filesys_open (fn_cp);
+
+  free(fn_cp);
   //TODO : Free fn_cp
   
   if (file == NULL) 
@@ -423,6 +445,7 @@ validate_segment (const struct Elf32_Phdr *phdr, struct file *file)
 
   /* It's okay. */
   return true;
+
 }
 
 /* Loads a segment starting at offset OFS in FILE at address
@@ -552,6 +575,9 @@ setup_stack (void **esp, char * file_name)
 
   *esp-=sizeof(int);
   memcpy(*esp,&zero,sizeof(int));
+
+  free(copy);
+  free(argv);
 
   return success;
 }

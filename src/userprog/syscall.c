@@ -31,6 +31,8 @@ syscall_handler (struct intr_frame *f UNUSED)
 
 	check_addr(p);
 
+
+
   int system_call = * p;
 	switch (system_call)
 	{
@@ -171,7 +173,7 @@ syscall_handler (struct intr_frame *f UNUSED)
 
 
 		default:
-		printf("Defalt %d\n",*p);
+		printf("Default %d\n",*p);
 	}
 }
 
@@ -201,6 +203,7 @@ int exec_proc(char *file_name)
 
 void exit_proc(int status)
 {
+	//printf("Exit : %s %d %d\n",thread_current()->name, thread_current()->tid, status);
 	struct list_elem *e;
 
       for (e = list_begin (&thread_current()->parent->child_proc); e != list_end (&thread_current()->parent->child_proc);
@@ -214,13 +217,12 @@ void exit_proc(int status)
           }
         }
 
+
 	thread_current()->exit_error = status;
-	lock_acquire(&thread_current()->parent->child_lock);
 
 	if(thread_current()->parent->waitingon == thread_current()->tid)
-		cond_signal(&thread_current()->parent->child_cond,&thread_current()->parent->child_lock);
+		sema_up(&thread_current()->parent->child_lock);
 
-	lock_release(&thread_current()->parent->child_lock);
 	thread_exit();
 }
 
