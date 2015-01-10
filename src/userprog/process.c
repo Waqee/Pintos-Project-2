@@ -21,6 +21,8 @@
 static thread_func start_process NO_RETURN;
 static bool load (const char *cmdline, void (**eip) (void), void **esp);
 
+extern struct list all_list;
+
 /* Starts a new thread running a user program loaded from
    FILENAME.  The new thread may be scheduled (and may even exit)
    before process_execute() returns.  Returns the new process's
@@ -29,6 +31,7 @@ tid_t
 process_execute (const char *file_name) 
 {
   char *fn_copy;
+  char *f_name;
   tid_t tid;
   
   /* Make a copy of FILE_NAME.
@@ -38,9 +41,11 @@ process_execute (const char *file_name)
     return TID_ERROR;
   strlcpy (fn_copy, file_name, PGSIZE);
   char *save_ptr;
-  file_name = strtok_r (file_name," ",&save_ptr);
+  f_name = malloc(strlen(file_name)+1);
+  strlcpy (f_name, file_name, strlen(file_name)+1);
+  f_name = strtok_r (f_name," ",&save_ptr);
   /* Create a new thread to execute FILE_NAME. */
-  tid = thread_create (file_name, PRI_DEFAULT, start_process, fn_copy);
+  tid = thread_create (f_name, PRI_DEFAULT, start_process, fn_copy);
   if (tid == TID_ERROR)
     palloc_free_page (fn_copy); 
 
@@ -89,11 +94,40 @@ start_process (void *file_name_)
    This function will be implemented in problem 2-2.  For now, it
    does nothing. */
 int
-process_wait (tid_t child_tid UNUSED) 
+process_wait (tid_t child_tid) 
 {
-  while(!thread_current()->ex)
-    ;
-  return -1;
+  struct list_elem *e;
+
+  struct child *ch=NULL;
+  struct list_elem *e1=NULL;
+
+  for (e = list_begin (&thread_current()->child_proc); e != list_end (&thread_current()->child_proc);
+           e = list_next (e))
+        {
+          struct child *f = list_entry (e, struct child, elem);
+          if(f->tid == child_tid)
+          {
+            ch = f;
+            e1 = e;
+          }
+        }
+
+
+  if(!ch || !e1)
+    return -1;
+
+  thread_current()->waitingon = ch->tid;
+    
+  lock_acquire(&thread_current()->child_lock);
+  if(!ch->used)
+    cond_wait(&thread_current()->child_cond,&thread_current()->child_lock);
+
+  lock_release(&thread_current()->child_lock);
+
+  int temp = ch->exit_error;
+  list_remove(e1);
+  
+  return temp;
 }
 
 /* Free the current process's resources. */
@@ -106,7 +140,10 @@ process_exit (void)
   int exit_code = cur->exit_error;
   printf("%s: exit(%d)\n",cur->name,exit_code);
 
+  acquire_filesys_lock();
+  file_close(thread_current()->self);
   close_all_files(&thread_current()->files);
+  release_filesys_lock();
   
   /* Destroy the current process's page directory and switch back
      to the kernel-only page directory. */
@@ -238,6 +275,8 @@ load (const char *file_name, void (**eip) (void), void **esp)
   
   char * save_ptr;
   fn_cp = strtok_r(fn_cp," ",&save_ptr);
+
+  acquire_filesys_lock();
   file = filesys_open (fn_cp);
   //TODO : Free fn_cp
   
@@ -325,12 +364,15 @@ load (const char *file_name, void (**eip) (void), void **esp)
 
   /* Start address. */
   *eip = (void (*) (void)) ehdr.e_entry;
-
   success = true;
 
+  file_deny_write(file);
+
+  thread_current()->self = file;
+  
  done:
   /* We arrive here whether the load is successful or not. */
-  file_close (file);
+ release_filesys_lock();
   return success;
 }
 

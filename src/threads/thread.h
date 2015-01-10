@@ -5,6 +5,7 @@
 #include <list.h>
 #include <stdint.h>
 #include <kernel/list.h>
+#include <threads/synch.h>
 
 /* States in a thread's life cycle. */
 enum thread_status
@@ -100,10 +101,17 @@ struct thread
 
     int exit_error;
 
+    struct list child_proc;
     struct thread* parent;
+
+    struct file *self;
 
     struct list files;
     int fd_count;
+
+    struct lock child_lock;
+    struct condition child_cond;
+    int waitingon;
 
 #ifdef USERPROG
     /* Owned by userprog/process.c. */
@@ -113,6 +121,13 @@ struct thread
     /* Owned by thread.c. */
     unsigned magic;                     /* Detects stack overflow. */
   };
+
+  struct child {
+      int tid;
+      struct list_elem elem;
+      int exit_error;
+      bool used;
+    };
 
 /* If false (default), use round-robin scheduler.
    If true, use multi-level feedback queue scheduler.

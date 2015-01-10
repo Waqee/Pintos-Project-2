@@ -29,9 +29,9 @@ syscall_handler (struct intr_frame *f UNUSED)
 {
   int * p = f->esp;
 
+	check_addr(p);
 
   int system_call = * p;
-
 	switch (system_call)
 	{
 		case SYS_HALT:
@@ -39,33 +39,47 @@ syscall_handler (struct intr_frame *f UNUSED)
 		break;
 
 		case SYS_EXIT:
-		thread_current()->parent->ex = true;
-		thread_current()->exit_error = *(p+1);
-		thread_exit();
+		check_addr(p+1);
+		exit_proc(*(p+1));
 		break;
 
 		case SYS_EXEC:
-		hex_dump(*(p+1),*(p+1),64,true);
+		check_addr(p+1);
 		check_addr(*(p+1));
-		f->eax = process_execute(*(p+1));
+		f->eax = exec_proc(*(p+1));
+		break;
+
+		case SYS_WAIT:
+		check_addr(p+1);
+		f->eax = process_wait(*(p+1));
 		break;
 
 		case SYS_CREATE:
+		check_addr(p+5);
 		check_addr(*(p+4));
+		acquire_filesys_lock();
 		f->eax = filesys_create(*(p+4),*(p+5));
+		release_filesys_lock();
 		break;
 
 		case SYS_REMOVE:
+		check_addr(p+1);
 		check_addr(*(p+1));
+		acquire_filesys_lock();
 		if(filesys_remove(*(p+1))==NULL)
 			f->eax = false;
 		else
 			f->eax = true;
+		release_filesys_lock();
 		break;
 
 		case SYS_OPEN:
+		check_addr(p+1);
 		check_addr(*(p+1));
+
+		acquire_filesys_lock();
 		struct file* fptr = filesys_open (*(p+1));
+		release_filesys_lock();
 		if(fptr==NULL)
 			f->eax = -1;
 		else
@@ -76,14 +90,19 @@ syscall_handler (struct intr_frame *f UNUSED)
 			thread_current()->fd_count++;
 			list_push_back (&thread_current()->files, &pfile->elem);
 			f->eax = pfile->fd;
+
 		}
 		break;
 
 		case SYS_FILESIZE:
+		check_addr(p+1);
+		acquire_filesys_lock();
 		f->eax = file_length (list_search(&thread_current()->files, *(p+1))->ptr);
+		release_filesys_lock();
 		break;
 
 		case SYS_READ:
+		check_addr(p+7);
 		check_addr(*(p+6));
 		if(*(p+5)==0)
 		{
@@ -99,10 +118,16 @@ syscall_handler (struct intr_frame *f UNUSED)
 			if(fptr==NULL)
 				f->eax=-1;
 			else
-				f->eax = file_read_at (fptr->ptr, *(p+6), *(p+7),0);
+			{
+				acquire_filesys_lock();
+				f->eax = file_read (fptr->ptr, *(p+6), *(p+7));
+				release_filesys_lock();
+			}
 		}
+		break;
 
 		case SYS_WRITE:
+		check_addr(p+7);
 		check_addr(*(p+6));
 		if(*(p+5)==1)
 		{
@@ -115,36 +140,101 @@ syscall_handler (struct intr_frame *f UNUSED)
 			if(fptr==NULL)
 				f->eax=-1;
 			else
-				f->eax = file_write_at (fptr->ptr, *(p+6), *(p+7),0);
+			{
+				acquire_filesys_lock();
+				f->eax = file_write (fptr->ptr, *(p+6), *(p+7));
+				release_filesys_lock();
+			}
 		}
 		break;
 
-		case SYS_CLOSE:
-		close_file(&thread_current()->files,*(p+1));
+		case SYS_SEEK:
+		check_addr(p+5);
+		acquire_filesys_lock();
+		file_seek(list_search(&thread_current()->files, *(p+4))->ptr,*(p+5));
+		release_filesys_lock();
+		break;
 
+		case SYS_TELL:
+		check_addr(p+1);
+		acquire_filesys_lock();
+		f->eax = file_tell(list_search(&thread_current()->files, *(p+1))->ptr);
+		release_filesys_lock();
+		break;
+
+		case SYS_CLOSE:
+		check_addr(p+1);
+		acquire_filesys_lock();
+		close_file(&thread_current()->files,*(p+1));
+		release_filesys_lock();
 		break;
 
 
 		default:
-		printf("%d\n",*p);
+		printf("Defalt %d\n",*p);
 	}
+}
+
+int exec_proc(char *file_name)
+{
+	acquire_filesys_lock();
+	char * fn_cp = malloc (strlen(file_name)+1);
+	  strlcpy(fn_cp, file_name, strlen(file_name)+1);
+	  
+	  char * save_ptr;
+	  fn_cp = strtok_r(fn_cp," ",&save_ptr);
+
+	 struct file* f = filesys_open (fn_cp);
+
+	  if(f==NULL)
+	  {
+	  	release_filesys_lock();
+	  	return -1;
+	  }
+	  else
+	  {
+	  	file_close(f);
+	  	release_filesys_lock();
+	  	return process_execute(file_name);
+	  }
+}
+
+void exit_proc(int status)
+{
+	struct list_elem *e;
+
+      for (e = list_begin (&thread_current()->parent->child_proc); e != list_end (&thread_current()->parent->child_proc);
+           e = list_next (e))
+        {
+          struct child *f = list_entry (e, struct child, elem);
+          if(f->tid == thread_current()->tid)
+          {
+          	f->used = true;
+          	f->exit_error = status;
+          }
+        }
+
+	thread_current()->exit_error = status;
+	lock_acquire(&thread_current()->parent->child_lock);
+
+	if(thread_current()->parent->waitingon == thread_current()->tid)
+		cond_signal(&thread_current()->parent->child_cond,&thread_current()->parent->child_lock);
+
+	lock_release(&thread_current()->parent->child_lock);
+	thread_exit();
 }
 
 void* check_addr(const void *vaddr)
 {
 	if (!is_user_vaddr(vaddr))
 	{
-		thread_current()->parent->ex = true;
-		thread_current()->exit_error = -1;
-		thread_exit();
+		exit_proc(-1);
 		return 0;
 	}
 	void *ptr = pagedir_get_page(thread_current()->pagedir, vaddr);
 	if (!ptr)
 	{
-		thread_current()->parent->ex = true;
-		thread_current()->exit_error = -1;
-		thread_exit();
+		exit_proc(-1);
 		return 0;
 	}
 	return ptr;
