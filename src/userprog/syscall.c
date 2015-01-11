@@ -4,6 +4,7 @@
 #include "threads/interrupt.h"
 #include "threads/thread.h"
 #include "threads/vaddr.h"
+#include "list.h"
 #include "process.h"
 
 static void syscall_handler (struct intr_frame *);
@@ -262,16 +263,20 @@ void close_file(struct list* files, int fd)
 
 	struct list_elem *e;
 
+	struct proc_file *f;
+
       for (e = list_begin (files); e != list_end (files);
            e = list_next (e))
         {
-          struct proc_file *f = list_entry (e, struct proc_file, elem);
+          f = list_entry (e, struct proc_file, elem);
           if(f->fd == fd)
           {
           	file_close(f->ptr);
           	list_remove(e);
           }
         }
+
+    free(f);
 }
 
 void close_all_files(struct list* files)
@@ -279,12 +284,18 @@ void close_all_files(struct list* files)
 
 	struct list_elem *e;
 
-      for (e = list_begin (files); e != list_end (files);
-           e = list_next (e))
-        {
-          struct proc_file *f = list_entry (e, struct proc_file, elem);
+	while(!list_empty(files))
+	{
+		e = list_pop_front(files);
+
+		struct proc_file *f = list_entry (e, struct proc_file, elem);
           
 	      	file_close(f->ptr);
 	      	list_remove(e);
-        }
+	      	free(f);
+
+
+	}
+
+      
 }
